@@ -1,0 +1,226 @@
+version: '3.8'
+
+services:
+  facade_service:
+    build:
+      context: .
+      dockerfile: Dockerfile.facade
+    command: sh -c "sleep 60 && python3 -m uvicorn facade_service:app --host 0.0.0.0 --port 5001"
+    ports:
+      - "5001:5001"
+    depends_on:
+      - logging_service_1
+      - logging_service_2
+      - logging_service_3
+      - kafka1
+      - kafka2
+      - kafka3
+    networks:
+      - app_network
+
+  logging_service_1:
+    build: 
+      context: .
+      dockerfile: Dockerfile.logging
+    command: python3 -m uvicorn logging_service:app --host 0.0.0.0 --port 5002
+    ports:
+      - "5002:5002"
+    networks:
+      - app_network
+
+
+  logging_service_2:
+    build:
+      context: .
+      dockerfile: Dockerfile.logging
+    command: python3 -m uvicorn logging_service:app --host 0.0.0.0 --port 5003
+    ports:
+      - "5003:5003"
+    networks:
+      - app_network
+
+
+  logging_service_3:
+    build:
+      context: .
+      dockerfile: Dockerfile.logging
+    command: python3 -m uvicorn logging_service:app --host 0.0.0.0 --port 5004
+    ports:
+      - "5004:5004"
+    networks:
+      - app_network
+
+
+  message_service_1:
+    build:
+      context: .
+      dockerfile: Dockerfile.message
+    command: sh -c "sleep 60 && python3 -m uvicorn message_service:app --host 0.0.0.0 --port 5005"
+    ports:
+      - "5005:5005"
+    depends_on:
+      - kafka1
+      - kafka2
+      - kafka3
+    networks:
+      - app_network
+
+  message_service_2:
+    build:
+      context: .
+      dockerfile: Dockerfile.message
+    command: sh -c "sleep 60 && python3 -m uvicorn message_service:app --host 0.0.0.0 --port 5007"
+    ports:
+      - "5007:5007"
+    depends_on:
+      - kafka1
+      - kafka2
+      - kafka3
+    networks:
+      - app_network
+
+  config_service:
+    build:
+      context: .
+      dockerfile: Dockerfile.config.service
+    command: python3 -m uvicorn config_service:app --host 0.0.0.0 --port 5006
+    ports:
+      - "5006:5006"
+    networks:    
+      - app_network
+
+  hazelcast_node_1:
+    image: hazelcast/hazelcast:5.5.0
+    container_name: hazelcast_node_1
+    environment:
+      - HAZELCAST_CLUSTER_NAME=dev
+      - HAZELCAST_MEMBER_LIST=hazelcast_node_2,hazelcast_node_3
+    networks:
+      - app_network
+    depends_on:
+      - logging_service_1
+
+  hazelcast_node_2:
+    image: hazelcast/hazelcast:5.5.0
+    container_name: hazelcast_node_2
+    environment:
+      - HAZELCAST_CLUSTER_NAME=dev
+      - HAZELCAST_MEMBER_LIST=hazelcast_node_1,hazelcast_node_3
+    networks:
+      - app_network
+    depends_on:
+      - logging_service_2
+
+
+  hazelcast_node_3:
+    image: hazelcast/hazelcast:5.5.0
+    container_name: hazelcast_node_3
+    environment:
+      - HAZELCAST_CLUSTER_NAME=dev
+      - HAZELCAST_MEMBER_LIST=hazelcast_node_1,hazelcast_node_2
+    networks:
+      - app_network
+    depends_on:
+      - logging_service_3    
+  
+  hazelcast_management_center:
+    image: hazelcast/management-center:5.5.0
+    container_name: hazelcast_management_center
+    depends_on:
+      - hazelcast_node_1
+      - hazelcast_node_2
+      - hazelcast_node_3
+    environment:
+      - MC_DEFAULT_CLUSTER=dev
+      - MC_DEFAULT_CLUSTER_MEMBERS=hazelcast_node_1:5701,hazelcast_node_2:5701,hazelcast_node_3:5701
+    ports:
+      - "8080:8080"
+    networks:
+      - app_network
+
+
+  zookeeper:
+    image: confluentinc/cp-zookeeper:7.5.0
+    environment:
+      ZOOKEEPER_CLIENT_PORT: 2181
+      ZOOKEEPER_TICK_TIME: 2000
+    ports:
+      - "2181:2181"
+    networks:
+      - app_network
+
+  kafka-init:
+    image: confluentinc/cp-kafka:7.5.0
+    depends_on:
+      - kafka1
+      - kafka2
+      - kafka3
+    entrypoint: ["/bin/sh", "-c"]
+    command: kafka-topics --create --bootstrap-server kafka1:9092 --replication-factor 3 --partitions 3 --topic message-topic
+
+    networks:
+      - app_network
+
+
+  kafka1:
+    image: confluentinc/cp-kafka:7.5.0
+    container_name: kafka1
+    depends_on:
+      - zookeeper
+    ports:
+      - "9092:9092"
+    environment:
+      KAFKA_BROKER_ID: 1
+      KAFKA_ZOOKEEPER_CONNECT: zookeeper:2181
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka1:9092
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 3
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 3
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 2
+      KAFKA_AUTO_CREATE_TOPICS_ENABLE: "true"
+
+    networks:
+      - app_network
+
+  kafka2:
+    image: confluentinc/cp-kafka:7.5.0
+    container_name: kafka2
+    depends_on:
+      - zookeeper
+    ports:
+      - "9093:9093"
+    environment:
+      KAFKA_BROKER_ID: 2
+      KAFKA_ZOOKEEPER_CONNECT: zookeeper:2181
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka2:9093
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 3
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 3
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 2
+      KAFKA_AUTO_CREATE_TOPICS_ENABLE: "true"
+
+    networks:
+      - app_network
+
+  kafka3:
+    image: confluentinc/cp-kafka:7.5.0
+    container_name: kafka3
+    depends_on:
+      - zookeeper
+    ports:
+      - "9094:9094"
+    environment:
+      KAFKA_BROKER_ID: 3
+      KAFKA_ZOOKEEPER_CONNECT: zookeeper:2181
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka3:9094
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 3
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 3
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 2
+      KAFKA_AUTO_CREATE_TOPICS_ENABLE: "true"
+
+    networks:
+      - app_network
+
+
+
+networks:
+  app_network:
+    driver: bridge
